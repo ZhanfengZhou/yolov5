@@ -1,10 +1,5 @@
-import argparse
 import os
-import platform
 from pathlib import Path
-
-import torch
-
 import sys
 sys.path.append('/home/zhanfeng/grasp_leaning_ws/src/yolov5/')
 import detect_new
@@ -22,20 +17,19 @@ print(f'YOLOv5 root relative directory is {ROOT_RELATIVE}')
 SOURCE = 0
 print(f'Source path is {SOURCE}')
 
-label, conf, xywh = detect_new.run(
+
+detect_new.run(
     weights=f'{ROOT}/runs/train/best_model_for_object_only/exp3/weights/best.pt',  # model.pt path(s)
     source=SOURCE,  # file/dir/URL/glob, 0 for webcam
     data=f'{ROOT}/data/coco128.yaml',  # dataset.yaml path
     imgsz=(416, 416),  # inference size (height, width)
-    conf_thres=0.5,  # confidence threshold
+    conf_thres=0.80,  # confidence threshold
     max_det=1,  # maximum detections per image
     device='',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
     view_img=False,  # show results
-    save_txt=True,  # save results to *.txt
-    save_conf=True,  # save confidences in --save-txt labels
-    save_img=True,  # do not save images/videos
+    save_txt=False,  # save results to *.txt
+    save_conf=False,  # save confidences in --save-txt labels
+    save_img=False,  # do not save images/videos
     project=f'{ROOT}/runs/detect/object_only_detect',  # save results to project/name
     name='det',  # save results to project/name
     )
-
-print(f'Label: {label}, confidence: {conf}, bounding box xywh: {xywh}')

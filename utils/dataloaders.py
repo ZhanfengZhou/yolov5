@@ -2,7 +2,7 @@
 """
 Dataloaders and dataset utils
 """
-
+import pyrealsense2 as rs
 import contextlib
 import glob
 import hashlib
@@ -368,6 +368,152 @@ class LoadStreams:
 
     def __len__(self):
         return len(self.sources)  # 1E12 frames = 32 streams at 30 FPS for 30 years
+
+
+
+class LoadRealSense:  # Stream from Intel RealSense L515
+
+    def __init__(self, width='960', height='540', fps='30'):
+
+        # Variabels for setup
+        self.mode = 'stream'
+        self.width = width
+        self.height = height
+        self.fps = fps
+        self.imgs = [None]
+        self.depths = [None]
+        self.img_size = 416
+
+        # Setup
+        self.pipe = rs.pipeline()
+        self.cfg = rs.config()
+
+        pipeline_wrapper = rs.pipeline_wrapper(self.pipe)
+        pipeline_profile = self.cfg.resolve(pipeline_wrapper)
+
+        device = pipeline_profile.get_device()
+
+        found_rgb = False
+        for s in device.sensors:
+            if s.get_info(rs.camera_info.name) == 'RGB Camera':
+                found_rgb = True
+                break
+        if not found_rgb:
+            raise Exception('No RGB camera found!')
+            
+        ## define the sensor parameter for close range image process
+        sensor = pipeline_profile.get_device().query_sensors()[0]
+
+        sensor.set_option(rs.option.laser_power, 100)
+        sensor.set_option(rs.option.confidence_threshold, 1)
+        sensor.set_option(rs.option.min_distance, 0)
+        sensor.set_option(rs.option.enable_max_usable_range, 0)
+        sensor.set_option(rs.option.receiver_gain, 18)
+        sensor.set_option(rs.option.post_processing_sharpening, 3)
+        sensor.set_option(rs.option.pre_processing_sharpening, 5)
+        sensor.set_option(rs.option.noise_filtering, 6)
+
+        ## Configure the pipeline to stream different resolutions of color and depth streams
+        self.cfg.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, self.fps)  #config depth stream
+        self.cfg.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.fps)
+
+        # Start streaming
+        self.profile = self.pipe.start(self.cfg)
+
+        print("streaming at w = " + str(self.width) + " h = " + str(self.height) + " fps = " + str(self.fps))
+
+        # Create an align object
+        # rs.align allows us to perform alignment of depth frames to others frames
+        # The "align_to" is the stream type to which we plan to align depth frames.
+        align_to = rs.stream.color  #与align to color stream
+        self.align = rs.align(align_to)
+
+        ## Define the filters
+        self.decimation_filter = rs.decimation_filter()  
+        self.spatial_filter = rs.spatial_filter()
+        self.temporal_filter = rs.temporal_filter()
+
+        ## Getting the depth sensor's depth scale (see rs-align example for explanation)
+        self.depth_sensor = self.profile.get_device().first_depth_sensor()
+        self.depth_scale = self.depth_sensor.get_depth_scale()
+
+    def update(self):
+
+        while True:
+            #Wait for frames and get the data
+            self.frames = self.pipe.wait_for_frames()
+            aligned_frames = self.align.process(self.frames)    # Align the depth frame to color frame
+            self.color_frame = aligned_frames.get_color_frame()   # get color frame, which is 960X540 image
+            self.aligned_depth_frame = aligned_frames.get_depth_frame()  #get aligned frame, ! aligned_depth_frame is a 640x480 depth image
+
+            ## filter the aligned depth frames
+            self.aligned_depth_frames = self.decimation_filter.process(self.aligned_depth_frame)
+            self.aligned_depth_frames = self.spatial_filter.process(self.aligned_depth_frames)
+            self.aligned_depth_frames = self.temporal_filter.process(self.aligned_depth_frames)
+
+            #Wait until RGB and depth frames are synchronised
+            if not self.aligned_depth_frame or not self.color_frame:
+                continue
+
+            #get RGB data and convert it to numpy array
+            img0 = np.asanyarray(self.color_frame.get_data())
+
+            #get depth image and convert it to numpy array
+            depth_image = np.asanyarray(self.aligned_depth_frame.get_data(), dtype=float)  # depth image default-16bit）
+            
+            #get colorized depth image for display purpose only
+            self.colorizer = rs.colorizer()
+            color_depth_image = np.asanyarray(self.colorizer.colorize(self.aligned_depth_frame).get_data())
+
+            self.imgs = np.expand_dims(img0, axis=0)
+
+            self.color_depth = color_depth_image
+            self.depth = depth_image
+            break
+
+        s = np.stack([letterbox(x, new_shape=self.img_size)[0].shape for x in self.imgs], 0)  # inference shapes
+
+        self.rect = np.unique(s, axis=0).shape[0] == 1
+
+        if not self.rect:
+            print('WARNING: Different stream shapes detected. For optimal performance supply similarly-shaped streams.')
+
+        time.sleep(0.01)  # wait time
+        return self.rect
+
+    def __iter__(self):
+        self.count = -1
+        return self
+
+    def __next__(self):
+        self.count += 1
+        self.rect = self.update()
+        img0 = self.imgs.copy()
+        color_depth = self.color_depth.copy()
+        depth = self.depth.copy()
+        if cv2.waitKey(1) == ord('q'):  # q to quit
+            cv2.destroyAllWindows()
+            raise StopIteration
+
+        img_path = 'realsense.jpg'
+
+        # Letterbox
+        img = [letterbox(x, new_shape=self.img_size, auto=self.rect)[0] for x in img0]
+
+        # Stack
+        img = np.stack(img, 0)
+
+        # Convert Image
+        img = img[:, :, :, ::-1].transpose(0, 3, 1, 2)  # BGR to RGB, to 3x416x416, uint8 to float32
+
+        img = np.ascontiguousarray(img)
+
+        # Return depth, depth0, img, img0
+        #return str(img_path), color_depth, depth, self.depth_scale, img, img0, None, ''
+        return str(img_path), self.profile, self.align, self.frames, img, img0, None, ''
+
+    def __len__(self):
+        return 0  # 1E12 frames = 32 streams at 30 FPS for 30 years
 
 
 def img2label_paths(img_paths):
