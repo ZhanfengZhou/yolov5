@@ -12,6 +12,7 @@
   <depend>math</depend>
   <depend>numpy</depend>
   <depend>time</depend>
+  <depend>PySimpleGUI</depend>
   <exec_depend>controller_manager</exec_depend>
   <exec_depend>joint_state_broadcaster</exec_depend>
   <exec_depend>launch</exec_depend>

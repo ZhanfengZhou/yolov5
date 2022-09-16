@@ -6,6 +6,7 @@ import numpy as np
 import pyrealsense2 as rs
 import cv2 
 import torch
+import PySimpleGUI as sg
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -83,6 +84,25 @@ def run(
         dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=pt, vid_stride=vid_stride)
         bs = 1  # batch_size
     vid_path, vid_writer = [None] * bs, [None] * bs
+    
+    ## Interface setup:
+    if view_img:
+        sg.theme("DarkBlue14")
+        image_viewer_column1 = [
+            [sg.Text("Real-time RGB Color Image:", size=(70, 1), font=('Helvetica', 15), justification="center")],
+            [sg.Image(filename="",key="rgb")],
+        ]
+        image_viewer_column2 = [
+            [sg.Text("Real-time Depth Image:", size=(70, 1), font=('Helvetica', 15), justification="center")],
+            [sg.Image(filename="",key="depth")],
+        ]
+        button_column = [
+            [sg.Button("Start grasp", size=(15, 2), font=('Helvetica', 15))],
+            [sg.Button("Exit", size=(15, 2), font=('Helvetica', 15), pad=(0, 100))],
+        ]
+        
+        layout = [[sg.Column(image_viewer_column1, element_justification='c'), sg.VSeperator(), sg.Column(image_viewer_column2, element_justification='c'), sg.VSeperator(),sg.Column(button_column, element_justification='c', expand_x=True)]]
+        interface = sg.Window(title="Human-robot Interactive Grasp Interface", layout=layout)
 
     # Run inference
     model.warmup(imgsz=(1 if pt else bs, 3, *imgsz))  # warmup
@@ -105,6 +125,12 @@ def run(
         with dt[2]:
             pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
 
+        if view_img:
+            event, values = interface.read(timeout=2)
+
+            if event == "Exit" or event == sg.WIN_CLOSED:
+                break
+        
         # Process predictions
         for i, det in enumerate(pred):  # per image
             seen += 1
@@ -152,35 +178,41 @@ def run(
             im0 = annotator.result()
             depth_im0 = annotator_depth.result()
 
-            if data_i == 0:
-                im0_get = im0
-                depth_im0_get = depth_im0
+            # if data_i == 0:
+            #     im0_get = im0
+            #     depth_im0_get = depth_im0
             
             if view_img:
-                im_hor = np.hstack((im0, im0_get))
-                depth_im_hor = np.hstack((depth_im0, depth_im0_get))
-                if platform.system() == 'Linux' and p not in windows:
-                    windows.append(p)
-                    cv2.namedWindow(str(p), cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)  # allow window resize (Linux)
-                    cv2.resizeWindow(str(p), im_hor.shape[1], im_hor.shape[0])
-                cv2.putText(im_hor, 'Real time color image', (200, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 3)
-                #cv2.putText(im_hor, 'Real time depth image', (400, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 3)
-                cv2.putText(im_hor, 'Color image captured for grasping', (800, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 3)
-                #cv2.putText(im_hor, 'Depth image captured for grasping', (1200, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 3)
-                cv2.imshow(str(p), im_hor)
-                cv2.imshow('color_depth', depth_im_hor)
-                key = cv2.waitKey(1)    #millisecond per frame
+                # im_hor = np.hstack((im0, im0_get))
+                # depth_im_hor = np.hstack((depth_im0, depth_im0_get))
+                # if platform.system() == 'Linux' and p not in windows:
+                #     windows.append(p)
+                #     cv2.namedWindow(str(p), cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)  # allow window resize (Linux)
+                #     cv2.resizeWindow(str(p), im0.shape[1], im0.shape[0])
+                # cv2.putText(im0, 'Real time color image', (200, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 3)
+                # cv2.putText(depth_im0, 'Real time depth image', (200, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 3)
+                # cv2.imshow(str(p), im0)
+                # cv2.imshow('color_depth', depth_im0)
+                # key = cv2.waitKey(1)    #millisecond per frame
 
-                # Press enter, space or 's' to save and write the image and pub grasp center
-                if (key & 0xFF == ord('s') or key == 32 or key == 13) and len(det)   :  
-                    print(f'Capturing image and start grasping')
-                    im0_get = im0
-                    im_hor = np.hstack((im0, im0_get))
-                    depth_im0_get = depth_im0
-                    depth_im_hor = np.hstack((depth_im0, depth_im0_get))
+                ## Press enter, space or 's' to save and write the image and pub grasp center
+                # if (key & 0xFF == ord('s') or key == 32 or key == 13) and len(det)   : 
+                
+                rgb = cv2.imencode(".png", im0)[1].tobytes()
+                depth = cv2.imencode(".png", depth_im0)[1].tobytes()
+                interface["rgb"].update(data=rgb) 
+                interface["depth"].update(data=depth) 
+                 
+                 
+                if event == "Start grasp":
+                    print(f'Start grasping')
+                    # im0_get = im0
+                    # im_hor = np.hstack((im0, im0_get))
+                    # depth_im0_get = depth_im0
+                    # depth_im_hor = np.hstack((depth_im0, depth_im0_get))
 
                     label = names[c]
-                    print(f'Label: {label}, confidence: {conf}, bounding box xywh: {xywh}')
+                    print(f'Num: {c}, Label: {label}, confidence: {conf}, bounding box xywh: {xywh}')
                     
                     # bbox center in pixels
                     x = int(xywh[0] * 960)
@@ -223,9 +255,11 @@ def run(
         #LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
 
         # Press esc or 'q' to close the image window
-        if key & 0xFF == ord('q') or key == 27:
-            #pipeline.stop()
-            break
+        # if key & 0xFF == ord('q') or key == 27:
+        #     #pipeline.stop()
+        #     break
+    
+    interface.close()
 
     # Print results
     t = tuple(x.t / seen * 1E3 for x in dt)  # speeds per image

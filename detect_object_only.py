@@ -23,8 +23,9 @@ detect_new.run(
     source=SOURCE,  # file/dir/URL/glob, 0 for webcam
     data=f'{ROOT}/data/coco128.yaml',  # dataset.yaml path
     imgsz=(416, 416),  # inference size (height, width)
-    conf_thres=0.80,  # confidence threshold
+    conf_thres=0.85,  # confidence threshold
     max_det=1,  # maximum detections per image
+    classes = [0,2,4,8],
     device='',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
     view_img=False,  # show results
     save_txt=False,  # save results to *.txt
@@ -33,3 +34,4 @@ detect_new.run(
     project=f'{ROOT}/runs/detect/object_only_detect',  # save results to project/name
     name='det',  # save results to project/name
     )
+    
