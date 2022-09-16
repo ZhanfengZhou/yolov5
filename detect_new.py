@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 import numpy as np
 import pyrealsense2 as rs
-
+import cv2 
 import torch
 
 FILE = Path(__file__).resolve()
@@ -88,7 +88,7 @@ def run(
     model.warmup(imgsz=(1 if pt else bs, 3, *imgsz))  # warmup
     seen, windows, dt = 0, [], (Profile(), Profile(), Profile())
     #for data_i, (path, im, im0s, vid_cap, s) in enumerate(dataset):
-    for data_i, (path, profile, align, frames, im, im0s, vid_cap, s) in enumerate(dataset):
+    for data_i, (path, profile, align, frames, color_depth, im, im0s, vid_cap, s) in enumerate(dataset):
         with dt[0]:
             im = torch.from_numpy(im).to(device)
             im = im.half() if model.fp16 else im.float()  # uint8 to fp16/32
@@ -121,6 +121,7 @@ def run(
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             imc = im0.copy() if save_crop else im0  # for save_crop
             annotator = Annotator(im0, line_width=line_thickness, example=str(names))
+            annotator_depth = Annotator(color_depth, line_width=line_thickness, example=str(names))
             if len(det):
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_coords(im.shape[2:], det[:, :4], im0.shape).round()
@@ -143,31 +144,41 @@ def run(
                     if save_img or save_crop or view_img:  # Add bbox to image
                         label = None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.2f}')
                         annotator.box_label(xyxy, label, color=colors(c, True))
+                        annotator_depth.box_label(xyxy, label, color=colors(c, True))
                     if save_crop:
                         save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
 
             # Stream results
             im0 = annotator.result()
+            depth_im0 = annotator_depth.result()
 
             if data_i == 0:
-                im_cap = im0
-                
+                im0_get = im0
+                depth_im0_get = depth_im0
+            
             if view_img:
-                im_hor = np.hstack((im0, im_cap))
-
+                im_hor = np.hstack((im0, im0_get))
+                depth_im_hor = np.hstack((depth_im0, depth_im0_get))
                 if platform.system() == 'Linux' and p not in windows:
                     windows.append(p)
                     cv2.namedWindow(str(p), cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)  # allow window resize (Linux)
                     cv2.resizeWindow(str(p), im_hor.shape[1], im_hor.shape[0])
-                cv2.putText(im_hor, 'Real time image                   Image captured for grasping', (175, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 3)
+                cv2.putText(im_hor, 'Real time color image', (200, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 3)
+                #cv2.putText(im_hor, 'Real time depth image', (400, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 3)
+                cv2.putText(im_hor, 'Color image captured for grasping', (800, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 3)
+                #cv2.putText(im_hor, 'Depth image captured for grasping', (1200, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 3)
                 cv2.imshow(str(p), im_hor)
-                key = cv2.waitKey(10)    #millisecond per frame
+                cv2.imshow('color_depth', depth_im_hor)
+                key = cv2.waitKey(1)    #millisecond per frame
 
                 # Press enter, space or 's' to save and write the image and pub grasp center
-                if key & 0xFF == ord('s') or key == 32 or key == 13:  
+                if (key & 0xFF == ord('s') or key == 32 or key == 13) and len(det)   :  
                     print(f'Capturing image and start grasping')
-                    im_cap = im0
-                    im_hor = np.hstack((im0, im_cap))
+                    im0_get = im0
+                    im_hor = np.hstack((im0, im0_get))
+                    depth_im0_get = depth_im0
+                    depth_im_hor = np.hstack((depth_im0, depth_im0_get))
+
                     label = names[c]
                     print(f'Label: {label}, confidence: {conf}, bounding box xywh: {xywh}')
                     

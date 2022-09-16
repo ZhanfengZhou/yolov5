@@ -18,7 +18,7 @@ from pathlib import Path
 from threading import Thread
 from urllib.parse import urlparse
 from zipfile import ZipFile
-
+import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -459,16 +459,34 @@ class LoadRealSense:  # Stream from Intel RealSense L515
             img0 = np.asanyarray(self.color_frame.get_data())
 
             #get depth image and convert it to numpy array
-            depth_image = np.asanyarray(self.aligned_depth_frame.get_data(), dtype=float)  # depth image default-16bit）
+            depth_image = np.asanyarray(self.aligned_depth_frame.get_data(), dtype=float)  # depth image default-16bit） #shape: 540*960*1
             
             #get colorized depth image for display purpose only
             self.colorizer = rs.colorizer()
-            color_depth_image = np.asanyarray(self.colorizer.colorize(self.aligned_depth_frame).get_data())
+            color_depth_image = np.asanyarray(self.colorizer.colorize(self.aligned_depth_frame).get_data())  # shape: 540*960*3
+
+            ## Align channel of depth image with color image
+            # Depth image is 1 channel, color is 3 channels !
+            depth_image_3d = np.dstack((depth_image, depth_image, depth_image))  # 3-channel depth image
+
+            ## Remove background - Set pixels further than clipping_distance to grey
+            # We will be removing the background of objects more than 'clipping_distance_in_meters' meters away
+            clipping_distance_in_meters = 1         #1 meter
+            clipping_distance = clipping_distance_in_meters / self.depth_scale
+            grey_color = 153
+            img0_bk_removed = np.where((depth_image_3d > clipping_distance) | (depth_image_3d <= 0), grey_color, img0)
+            color_depth_image_bk_removed = np.where((depth_image_3d > clipping_distance) | (depth_image_3d <= 0), grey_color, color_depth_image)
+            
+            # rotate -90 degrees
+            img0 = cv2.rotate(img0, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            color_depth_image_bk_removed = cv2.rotate(color_depth_image_bk_removed, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
             self.imgs = np.expand_dims(img0, axis=0)
 
-            self.color_depth = color_depth_image
+            #self.color_depth = color_depth_image
+            self.color_depth = color_depth_image_bk_removed
             self.depth = depth_image
+
             break
 
         s = np.stack([letterbox(x, new_shape=self.img_size)[0].shape for x in self.imgs], 0)  # inference shapes
@@ -509,8 +527,7 @@ class LoadRealSense:  # Stream from Intel RealSense L515
         img = np.ascontiguousarray(img)
 
         # Return depth, depth0, img, img0
-        #return str(img_path), color_depth, depth, self.depth_scale, img, img0, None, ''
-        return str(img_path), self.profile, self.align, self.frames, img, img0, None, ''
+        return str(img_path), self.profile, self.align, self.frames, color_depth, img, img0, None, ''
 
     def __len__(self):
         return 0  # 1E12 frames = 32 streams at 30 FPS for 30 years
