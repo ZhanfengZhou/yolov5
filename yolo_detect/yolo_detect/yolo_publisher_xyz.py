@@ -1,13 +1,14 @@
 import rclpy
 from rclpy.node import Node
 import cv2
-import numpy as np
 import pyrealsense2 as rs
 import os
-import platform
 import sys
 from pathlib import Path
 import torch
+import PySimpleGUI as sg
+from threading import Thread
+import getch
 
 from std_msgs.msg import Float32MultiArray
 
@@ -36,7 +37,11 @@ print(f'Source path is {SOURCE}')
 class YOLOPublisher(Node):
     def __init__(self):
         super().__init__('yolo_publisher_xyz')
+
+        self.grasp_dir = 1   # default direction is forward
+
         self.publisher = self.create_publisher(Float32MultiArray, 'yolo_xyz', 10)
+
 
     def run(self):
             self.run_detect(
@@ -46,6 +51,7 @@ class YOLOPublisher(Node):
                 imgsz=(416, 416),  # inference size (height, width)
                 conf_thres=0.80,  # confidence threshold
                 max_det=1,  # maximum detections per image
+                classes = [0,2,4,8],
                 device='',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
                 view_img=False,  # show results
                 save_txt=False,  # save results to *.txt
@@ -55,13 +61,22 @@ class YOLOPublisher(Node):
                 name='det',  # save results to project/name
                 )
 
+    def set_grasp_dir(self):
+        while True:
+            self.grasp_dir = input('Please input grasp direction (1-forward, 2-top, 3-bottom): \n')
+            
+            if self.grasp_dir == '9':
+                break
+        return
 
-    def grasp_center_pub(self, label, x, y, z):
+
+
+    def grasp_center_pub(self, label, x, y, z, grasp_dir):
         print(x, y, z)
         msg = Float32MultiArray()
-        msg.data = [float(x), float(y), float(z)]  # in meter
+        msg.data = [float(x), float(y), float(z), float(grasp_dir)]  # in meter
         self.publisher.publish(msg)
-        self.get_logger().info(f'Publishing msg.data: {msg.data}')
+        print(f'Publishing msg.data: {msg.data}')
 
 
     @smart_inference_mode() #??
@@ -123,11 +138,30 @@ class YOLOPublisher(Node):
             bs = 1  # batch_size
         vid_path, vid_writer = [None] * bs, [None] * bs
 
+        ## Interface setup:
+        if view_img:
+            sg.theme("DarkBlue14")
+            image_viewer_column1 = [
+                [sg.Text("Real-time RGB Color Image:", size=(70, 1), font=('Helvetica', 15), justification="center")],
+                [sg.Image(filename="",key="rgb")],
+            ]
+            image_viewer_column2 = [
+                [sg.Text("Real-time Depth Image:", size=(70, 1), font=('Helvetica', 15), justification="center")],
+                [sg.Image(filename="",key="depth")],
+            ]
+            button_column = [
+                [sg.Button("Start grasp", size=(15, 2), font=('Helvetica', 15))],
+                [sg.Button("Exit", size=(15, 2), font=('Helvetica', 15), pad=(0, 100))],
+            ]
+        
+            layout = [[sg.Column(image_viewer_column1, element_justification='c'), sg.VSeperator(), sg.Column(image_viewer_column2, element_justification='c'), sg.VSeperator(),sg.Column(button_column, element_justification='c', expand_x=True)]]
+            interface = sg.Window(title="Human-robot Interactive Grasp Interface", layout=layout)
+
         # Run inference
         model.warmup(imgsz=(1 if pt else bs, 3, *imgsz))  # warmup
         seen, windows, dt = 0, [], (Profile(), Profile(), Profile())
         #for data_i, (path, im, im0s, vid_cap, s) in enumerate(dataset):
-        for data_i, (path, profile, align, frames, im, im0s, vid_cap, s) in enumerate(dataset):
+        for data_i, (path, profile, align, frames, color_depth, im, im0s, vid_cap, s) in enumerate(dataset):
             with dt[0]:
                 im = torch.from_numpy(im).to(device)
                 im = im.half() if model.fp16 else im.float()  # uint8 to fp16/32
@@ -143,6 +177,12 @@ class YOLOPublisher(Node):
             # NMS
             with dt[2]:
                 pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
+
+            if view_img:
+                event, values = interface.read(timeout=2)
+
+                if event == "Exit" or event == sg.WIN_CLOSED:
+                    break
 
             # Process predictions
             for i, det in enumerate(pred):  # per image
@@ -160,6 +200,7 @@ class YOLOPublisher(Node):
                 gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
                 imc = im0.copy() if save_crop else im0  # for save_crop
                 annotator = Annotator(im0, line_width=line_thickness, example=str(names))
+                annotator_depth = Annotator(color_depth, line_width=line_thickness, example=str(names))
                 if len(det):
                     # Rescale boxes from img_size to im0 size
                     det[:, :4] = scale_coords(im.shape[2:], det[:, :4], im0.shape).round()
@@ -182,34 +223,25 @@ class YOLOPublisher(Node):
                         if save_img or save_crop or view_img:  # Add bbox to image
                             label = None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.2f}')
                             annotator.box_label(xyxy, label, color=colors(c, True))
+                            annotator_depth.box_label(xyxy, label, color=colors(c, True))
                         if save_crop:
                             save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
 
                 # Stream results
                 im0 = annotator.result()
-
-                if data_i == 0:
-                    im_cap = im0
+                depth_im0 = annotator_depth.result()
                     
                 if view_img:
-                    im_hor = np.hstack((im0, im_cap))
-
-                    if platform.system() == 'Linux' and p not in windows:
-                        windows.append(p)
-                        cv2.namedWindow(str(p), cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)  # allow window resize (Linux)
-                        cv2.resizeWindow(str(p), im_hor.shape[1], im_hor.shape[0])
-                    cv2.putText(im_hor, 'Real time image                   Image captured for grasping', (175, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 3)
-                    cv2.imshow(str(p), im_hor)
-                    key = cv2.waitKey(10)    #millisecond per frame
+                    rgb = cv2.imencode(".png", im0)[1].tobytes()
+                    depth = cv2.imencode(".png", depth_im0)[1].tobytes()
+                    interface["rgb"].update(data=rgb) 
+                    interface["depth"].update(data=depth) 
 
                     # Press enter, space or 's' to save and write the image and pub grasp center
-                    if key & 0xFF == ord('s') or key == 32 or key == 13:  
-                        print(f'Capturing image and start grasping')
-                        im_cap = im0
-                        im_hor = np.hstack((im0, im_cap))
+                    if event == "Start grasp":
                         label = names[c]
-                        #print(f'Label: {label}, confidence: {conf}, bounding box xywh: {xywh}')
-                        
+                        print(f'Start grasping: Object: {label}, bounding box xywh: {xywh}, grasp direction: {self.grasp_dir}')
+
                         # bbox center in pixels
                         x = int(xywh[0] * 960)
                         y = int(xywh[1] * 540)
@@ -225,7 +257,7 @@ class YOLOPublisher(Node):
                         depth_intrin = aligned_depth_frame.profile.as_video_stream_profile().intrinsics 
                         camera_coordinate = rs.rs2_deproject_pixel_to_point(depth_intrin, [x, y], dis)  
 
-                        self.grasp_center_pub(label, camera_coordinate[0], camera_coordinate[1], dis)
+                        self.grasp_center_pub(label, camera_coordinate[0], camera_coordinate[1], dis, self.grasp_dir)
 
 
                 # Save results (image with detections)
@@ -250,10 +282,7 @@ class YOLOPublisher(Node):
             # Print time (inference-only)
             #self.get_logger().info(f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
 
-            # Press esc or 'q' to close the image window
-            if key & 0xFF == ord('q') or key == 27:
-                #pipeline.stop()
-                break
+        interface.close()
 
         # Print results
         t = tuple(x.t / seen * 1E3 for x in dt)  # speeds per image
@@ -269,6 +298,10 @@ def main(args=None):
     rclpy.init(args=args)
 
     yolo_publisher_xyz = YOLOPublisher()
+
+    thread = Thread(target=yolo_publisher_xyz.set_grasp_dir)
+    thread.start()
+
     yolo_publisher_xyz.run()
 
     yolo_publisher_xyz.destroy_node()
