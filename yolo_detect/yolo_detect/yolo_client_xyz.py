@@ -1,5 +1,9 @@
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+
+
 import cv2
 import pyrealsense2 as rs
 import os
@@ -10,7 +14,7 @@ import PySimpleGUI as sg
 from threading import Thread
 import getch
 
-from std_msgs.msg import Float32MultiArray
+from ur_msgs.srv import YOLOOutput, Task
 
 import os
 from pathlib import Path
@@ -34,13 +38,17 @@ print(f'Source path is {SOURCE}')
 
 @smart_inference_mode()    
 
-class YOLOPublisher(Node):
+class YOLOClient(Node):
     def __init__(self):
-        super().__init__('yolo_publisher_xyz')
+        super().__init__('yolo_client_xyz')
 
         self.grasp_dir = 1   # default direction is forward
 
-        self.publisher = self.create_publisher(Float32MultiArray, 'yolo_xyz', 10)
+        self.client = self.create_client(YOLOOutput, 'yolo_xyz', callback_group=MutuallyExclusiveCallbackGroup())
+        self.client_req = YOLOOutput.Request()
+
+        self.client_task = self.create_client(Task, 'task', callback_group=MutuallyExclusiveCallbackGroup())
+        self.client_task_req = Task.Request()
 
 
     def run(self):
@@ -64,19 +72,47 @@ class YOLOPublisher(Node):
     def set_grasp_dir(self):
         while True:
             self.grasp_dir = input('Please input grasp direction (1-forward, 2-top, 3-bottom): \n')
-            
-            if self.grasp_dir == '9':
+            if (self.grasp_dir == '1') or (self.grasp_dir == '2') or (self.grasp_dir == '3'):
+                print(f'Correct input: {self.grasp_dir}')
+            elif self.grasp_dir == '9':
+                print(f'stop grasp direction input')
                 break
+            else:
+                print(f'wrong input')
         return
 
+    def send_request_task(self, task_num):
+        # task: 1-sleep, 2-prepare grasp from human, 3-start grasping from human, 
+        #   4-prepare grasp from table(including scanning) , 5-start grasping from table
+        if not self.client_task.wait_for_service(timeout_sec=1.0):
+            print('yolo output service not available, wait and send request again...')
+        else: 
+            self.client_task_req.task = task_num
+            print(f'task number is {task_num}')
 
-    def grasp_center_pub(self, label, x, y, z, grasp_dir):
-        print(x, y, z)
-        msg = Float32MultiArray()
-        msg.data = [float(x), float(y), float(z), float(grasp_dir)]  # in meter
-        self.publisher.publish(msg)
-        print(f'Publishing msg.data: {msg.data}')
+            self.future = self.client_task.call_async(self.client_task_req)
+            rclpy.spin_until_future_complete(self, self.future)
 
+
+    def send_request_yolo_output(self, label, x, y, z, grasp_dir):
+        if not self.client.wait_for_service(timeout_sec=1.0):
+            print('yolo output service not available, wait and send request again...')
+        else:
+            self.client_req.object_center_x = float(x)   #should be float
+            self.client_req.object_center_y = float(y)
+            self.client_req.object_center_z = float(z)
+            self.client_req.grasp_dir = float(grasp_dir)
+
+            print(f'Send request to robotic arm: object: {label}')
+            print(f'x: {self.client_req.object_center_x}')
+            print(f'y: {self.client_req.object_center_y}')
+            print(f'z: {self.client_req.object_center_z}')
+            print(f'grasp direction: {self.client_req.grasp_dir}')
+
+            self.future = self.client.call_async(self.client_req)
+            rclpy.spin_until_future_complete(self, self.future)
+
+            print(f'Robotic arm response status: {self.future.result()}')
 
     @smart_inference_mode() #??
     def run_detect(self,
@@ -149,18 +185,53 @@ class YOLOPublisher(Node):
                 [sg.Image(filename="",key="depth")],
             ]
             button_column = [
-                [sg.Button("Start grasp", size=(15, 2), font=('Helvetica', 15))],
-                [sg.Button("Exit", size=(15, 2), font=('Helvetica', 15), pad=(0, 100))],
+                [sg.Text("Grasp from human hands", size=(15, 1), font=('Helvetica', 15), justification="center")],
+                [sg.Button("Start", key='start_human', size=(15, 2), font=('Helvetica', 15))],
+                [sg.Button("Grasp", key='grasp_human', size=(15, 2), font=('Helvetica', 15))],
+                [sg.Text("Real-time RGB Color Image:", size=(15, 1), font=('Helvetica', 15), justification="center")],
+                [sg.Button("Start", key='start_table', size=(15, 2), font=('Helvetica', 15))],
+                [sg.Button("Grasp", key='grasp table', size=(15, 2), font=('Helvetica', 15))],
+                [sg.Button("Sleep", key='sleep', size=(15, 2), font=('Helvetica', 15), pad=(0, 100))],
+                [sg.Button("Exit", key='exit',  size=(15, 2), font=('Helvetica', 15), pad=(0, 100))],
             ]
         
             layout = [[sg.Column(image_viewer_column1, element_justification='c'), sg.VSeperator(), sg.Column(image_viewer_column2, element_justification='c'), sg.VSeperator(),sg.Column(button_column, element_justification='c', expand_x=True)]]
             interface = sg.Window(title="Human-robot Interactive Grasp Interface", layout=layout)
-
+        
+        
+        
         # Run inference
+        update_img = False
         model.warmup(imgsz=(1 if pt else bs, 3, *imgsz))  # warmup
         seen, windows, dt = 0, [], (Profile(), Profile(), Profile())
         #for data_i, (path, im, im0s, vid_cap, s) in enumerate(dataset):
         for data_i, (path, profile, align, frames, color_depth, im, im0s, vid_cap, s) in enumerate(dataset):
+
+            if view_img:
+                event, values = interface.read(timeout=2)
+                # task_num: 0-nothing input, 1-sleep, 2-prepare grasp from human, 3-start grasping from human, 
+                #   4-prepare grasp from table(including scanning) , 5-start grasping from table
+
+                if event == "exit" or event == sg.WIN_CLOSED:
+                    break
+                elif event == "sleep":
+                    task_num = 1
+                    self.send_request_task(task_num)
+                    update_img = False
+                elif event == "start_human":
+                    task_num = 2
+                    self.send_request_task(task_num)
+                    update_img = True
+                elif event == "grasp_human":
+                    task_num = 3
+                    self.send_request_task(task_num)
+                    update_img = True
+                else:
+                    task_num = 0   #no events, no clicks
+
+                if not update_img:
+                    continue
+
             with dt[0]:
                 im = torch.from_numpy(im).to(device)
                 im = im.half() if model.fp16 else im.float()  # uint8 to fp16/32
@@ -177,11 +248,6 @@ class YOLOPublisher(Node):
             with dt[2]:
                 pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
 
-            if view_img:
-                event, values = interface.read(timeout=2)
-
-                if event == "Exit" or event == sg.WIN_CLOSED:
-                    break
 
             # Process predictions
             for i, det in enumerate(pred):  # per image
@@ -231,15 +297,17 @@ class YOLOPublisher(Node):
                 depth_im0 = annotator_depth.result()
                     
                 if view_img:
+
                     rgb = cv2.imencode(".png", im0)[1].tobytes()
                     depth = cv2.imencode(".png", depth_im0)[1].tobytes()
                     interface["rgb"].update(data=rgb) 
                     interface["depth"].update(data=depth) 
 
                     # Press enter, space or 's' to save and write the image and pub grasp center
-                    if event == "Start grasp":
+                    if task_num == 3:
+
                         label = names[c]
-                        print(f'Start grasping: Object: {label}, bounding box xywh: {xywh}, grasp direction: {self.grasp_dir}')
+                        print(f'Object detected: {label}, bounding box xywh: {xywh}, grasp direction: {self.grasp_dir}')
 
                         # bbox center in pixels
                         x = int(xywh[0] * 960)
@@ -256,7 +324,7 @@ class YOLOPublisher(Node):
                         depth_intrin = aligned_depth_frame.profile.as_video_stream_profile().intrinsics 
                         camera_coordinate = rs.rs2_deproject_pixel_to_point(depth_intrin, [x, y], dis)  
 
-                        self.grasp_center_pub(label, camera_coordinate[0], camera_coordinate[1], dis, self.grasp_dir)
+                        self.send_request_yolo_output(label, camera_coordinate[0], camera_coordinate[1], dis, self.grasp_dir)
 
 
                 # Save results (image with detections)
@@ -296,14 +364,15 @@ class YOLOPublisher(Node):
 def main(args=None):
     rclpy.init(args=args)
 
-    yolo_publisher_xyz = YOLOPublisher()
+    yolo_client_xyz = YOLOClient()
 
-    thread = Thread(target=yolo_publisher_xyz.set_grasp_dir)
+    thread = Thread(target=yolo_client_xyz.set_grasp_dir)
     thread.start()
 
-    yolo_publisher_xyz.run()
+    yolo_client_xyz.run()
 
-    yolo_publisher_xyz.destroy_node()
+    
+    yolo_client_xyz.destroy_node()
     rclpy.shutdown()
 
 

@@ -21,6 +21,7 @@ setup(
     entry_points={
         'console_scripts': [
             "yolopub_xyz = yolo_detect.yolo_publisher_xyz:main",
+            "yolocli_xyz = yolo_detect.yolo_client_xyz:main",
         ],
     },
 )
