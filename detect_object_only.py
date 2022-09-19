@@ -1,13 +1,13 @@
 import os
 from pathlib import Path
 import sys
-sys.path.append('/home/zhanfeng/grasp_leaning_ws/src/yolov5/')
+sys.path.append('/home/zhanfeng/grasp_learning_ws/src/yolov5/')
 import detect_new
 
 FILE = Path(__file__).resolve()
 print(f'Current file path is {FILE}')
 
-ROOT = '/home/zhanfeng/grasp_leaning_ws/src/yolov5' # YOLOv5 root directory
+ROOT = '/home/zhanfeng/grasp_learning_ws/src/yolov5' # YOLOv5 root directory
 print(f'YOLOv5 root directory is {ROOT}')
 
 ROOT_RELATIVE = Path(os.path.relpath(ROOT, Path.cwd()))  # relative

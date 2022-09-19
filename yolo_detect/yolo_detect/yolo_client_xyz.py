@@ -12,14 +12,13 @@ from pathlib import Path
 import torch
 import PySimpleGUI as sg
 from threading import Thread
-import getch
 
 from ur_msgs.srv import YOLOOutput, Task
 
 import os
 from pathlib import Path
 import sys
-sys.path.append('/home/zhanfeng/grasp_leaning_ws/src/yolov5/')
+sys.path.append('/home/zhanfeng/grasp_learning_ws/src/yolov5/')
 
 from models.common import DetectMultiBackend
 from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams, LoadRealSense
@@ -30,7 +29,7 @@ from utils.torch_utils import select_device, smart_inference_mode
 
 
 FILE = Path(__file__).resolve()
-ROOT = '/home/zhanfeng/grasp_leaning_ws/src/yolov5' # YOLOv5 root directory
+ROOT = '/home/zhanfeng/grasp_learning_ws/src/yolov5' # YOLOv5 root directory
 ROOT_RELATIVE = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 SOURCE = 0
@@ -73,46 +72,51 @@ class YOLOClient(Node):
         while True:
             self.grasp_dir = input('Please input grasp direction (1-forward, 2-top, 3-bottom): \n')
             if (self.grasp_dir == '1') or (self.grasp_dir == '2') or (self.grasp_dir == '3'):
-                print(f'Correct input: {self.grasp_dir}')
+                self.get_logger().info(f'Correct input: {self.grasp_dir}')
             elif self.grasp_dir == '9':
-                print(f'stop grasp direction input')
+                self.get_logger().info(f'stop grasp direction input')
                 break
             else:
-                print(f'wrong input')
+                self.get_logger().info(f'wrong input')
         return
 
     def send_request_task(self, task_num):
         # task: 1-sleep, 2-prepare grasp from human, 3-start grasping from human, 
         #   4-prepare grasp from table(including scanning) , 5-start grasping from table
         if not self.client_task.wait_for_service(timeout_sec=1.0):
-            print('yolo output service not available, wait and send request again...')
+            self.get_logger().info('task service not available, wait and send request again...')
         else: 
             self.client_task_req.task = task_num
-            print(f'task number is {task_num}')
+            self.get_logger().info(f'task number is {task_num}')
 
             self.future = self.client_task.call_async(self.client_task_req)
-            rclpy.spin_until_future_complete(self, self.future)
+            # rclpy.spin_until_future_complete(self, self.future)
+            #self.get_logger().info(f'task service response status: {self.future.result()}')
+            rclpy.spin_once(self)
+            self.get_logger().info(f'Robotic arm response to taskset client')
+
 
 
     def send_request_yolo_output(self, label, x, y, z, grasp_dir):
         if not self.client.wait_for_service(timeout_sec=1.0):
-            print('yolo output service not available, wait and send request again...')
+            self.get_logger().info('yolo output service not available, wait and send request again...')
         else:
             self.client_req.object_center_x = float(x)   #should be float
             self.client_req.object_center_y = float(y)
             self.client_req.object_center_z = float(z)
             self.client_req.grasp_dir = float(grasp_dir)
 
-            print(f'Send request to robotic arm: object: {label}')
-            print(f'x: {self.client_req.object_center_x}')
-            print(f'y: {self.client_req.object_center_y}')
-            print(f'z: {self.client_req.object_center_z}')
-            print(f'grasp direction: {self.client_req.grasp_dir}')
+            self.get_logger().info(f'Send request to robotic arm: object: {label}')
+            self.get_logger().info(f'x: {self.client_req.object_center_x}')
+            self.get_logger().info(f'y: {self.client_req.object_center_y}')
+            self.get_logger().info(f'z: {self.client_req.object_center_z}')
+            self.get_logger().info(f'grasp direction: {self.client_req.grasp_dir}')
 
             self.future = self.client.call_async(self.client_req)
-            rclpy.spin_until_future_complete(self, self.future)
-
-            print(f'Robotic arm response status: {self.future.result()}')
+            #rclpy.spin_until_future_complete(self, self.future)
+            #self.get_logger().info(f'Robotic arm response status: {self.future.result()}')
+            rclpy.spin_once(self)
+            self.get_logger().info(f'Robotic arm response to yolo client')
 
     @smart_inference_mode() #??
     def run_detect(self,
@@ -185,14 +189,14 @@ class YOLOClient(Node):
                 [sg.Image(filename="",key="depth")],
             ]
             button_column = [
-                [sg.Text("Grasp from human hands", size=(15, 1), font=('Helvetica', 15), justification="center")],
+                [sg.Text("Grasp objects from human hands", size=(15, 2), font=('Helvetica', 15), justification="center")],
                 [sg.Button("Start", key='start_human', size=(15, 2), font=('Helvetica', 15))],
                 [sg.Button("Grasp", key='grasp_human', size=(15, 2), font=('Helvetica', 15))],
-                [sg.Text("Real-time RGB Color Image:", size=(15, 1), font=('Helvetica', 15), justification="center")],
+                [sg.Text("Grasp objects from table", size=(15, 2), font=('Helvetica', 15), justification="center", pad=(0, (50, 0)))],
                 [sg.Button("Start", key='start_table', size=(15, 2), font=('Helvetica', 15))],
                 [sg.Button("Grasp", key='grasp table', size=(15, 2), font=('Helvetica', 15))],
-                [sg.Button("Sleep", key='sleep', size=(15, 2), font=('Helvetica', 15), pad=(0, 100))],
-                [sg.Button("Exit", key='exit',  size=(15, 2), font=('Helvetica', 15), pad=(0, 100))],
+                [sg.Button("Sleep", key='sleep', size=(15, 2), font=('Helvetica', 15), pad=(0, (50, 0)))],
+                [sg.Button("Exit", key='exit',  size=(15, 2), font=('Helvetica', 15), pad=(0, 10))],
             ]
         
             layout = [[sg.Column(image_viewer_column1, element_justification='c'), sg.VSeperator(), sg.Column(image_viewer_column2, element_justification='c'), sg.VSeperator(),sg.Column(button_column, element_justification='c', expand_x=True)]]
@@ -307,7 +311,7 @@ class YOLOClient(Node):
                     if task_num == 3:
 
                         label = names[c]
-                        print(f'Object detected: {label}, bounding box xywh: {xywh}, grasp direction: {self.grasp_dir}')
+                        self.get_logger().info(f'Object detected: {label}, bounding box xywh: {xywh}, grasp direction: {self.grasp_dir}')
 
                         # bbox center in pixels
                         x = int(xywh[0] * 960)

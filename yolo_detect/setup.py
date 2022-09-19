@@ -22,6 +22,7 @@ setup(
         'console_scripts': [
             "yolopub_xyz = yolo_detect.yolo_publisher_xyz:main",
             "yolocli_xyz = yolo_detect.yolo_client_xyz:main",
+            "grasp_interface_yolo = yolo_detect.grasp_interface_yolo:main",
         ],
     },
 )

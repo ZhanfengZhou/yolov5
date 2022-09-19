@@ -15,7 +15,7 @@ from std_msgs.msg import Float32MultiArray
 import os
 from pathlib import Path
 import sys
-sys.path.append('/home/zhanfeng/grasp_leaning_ws/src/yolov5/')
+sys.path.append('/home/zhanfeng/grasp_learning_ws/src/yolov5/')
 
 from models.common import DetectMultiBackend
 from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams, LoadRealSense
@@ -26,7 +26,7 @@ from utils.torch_utils import select_device, smart_inference_mode
 
 
 FILE = Path(__file__).resolve()
-ROOT = '/home/zhanfeng/grasp_leaning_ws/src/yolov5' # YOLOv5 root directory
+ROOT = '/home/zhanfeng/grasp_learning_ws/src/yolov5' # YOLOv5 root directory
 ROOT_RELATIVE = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 SOURCE = 0
