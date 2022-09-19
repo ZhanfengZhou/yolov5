@@ -4,7 +4,6 @@ from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 
-
 import cv2
 import pyrealsense2 as rs
 import os
@@ -14,7 +13,7 @@ import torch
 import PySimpleGUI as sg
 from threading import Thread
 
-from ur_msgs.srv import YOLOOutput, Task
+from ur_msgs.srv import YOLOOutput, Task, YOLOOutputList
 
 import os
 from pathlib import Path
@@ -44,6 +43,9 @@ class YOLOClient(Node):
         self.client = self.create_client(YOLOOutput, 'yolo_xyz', callback_group=MutuallyExclusiveCallbackGroup())
         self.client_req = YOLOOutput.Request()
 
+        self.client_list = self.create_client(YOLOOutputList, 'yolo_xyz_list', callback_group=MutuallyExclusiveCallbackGroup())
+        self.client_list_req = YOLOOutputList.Request()
+
         self.client_task = self.create_client(Task, 'task', callback_group=MutuallyExclusiveCallbackGroup())
         self.client_task_req = Task.Request()
 
@@ -51,6 +53,7 @@ class YOLOClient(Node):
     def interface_run(self):
 
             ## Interface setup:
+            self.get_logger().info(f'Interface start:')
             sg.theme("DarkBlue14")
             image_viewer_column1 = [
                 [sg.Text("Real-time RGB Color Image:", size=(70, 1), font=('Helvetica', 15), justification="center")],
@@ -63,11 +66,13 @@ class YOLOClient(Node):
             button_column = [
                 [sg.Text("Grasp objects from human hands", size=(15, 2), font=('Helvetica', 15), justification="center")],
                 [sg.Button("Load", key='load_human', size=(15, 2), font=('Helvetica', 15))],
+                [sg.ProgressBar(5, orientation='h', size=(15, 1), border_width=4, key='load_human_bar', bar_color=("Blue","Yellow"))],
                 [sg.Button("Start", key='start_human', size=(15, 2), font=('Helvetica', 15))],
                 [sg.Button("Grasp", key='grasp_human', size=(15, 2), font=('Helvetica', 15))],
                 [sg.Button("Stop", key='stop_human', size=(15, 2), font=('Helvetica', 15))],
                 [sg.Text("Grasp objects from table", size=(15, 2), font=('Helvetica', 15), justification="center", pad=(0, (50, 0)))],
                 [sg.Button("Load", key='load_table', size=(15, 2), font=('Helvetica', 15))],
+                [sg.ProgressBar(5, orientation='h', size=(15, 1), border_width=4, key='load_table_bar', bar_color=("Blue","Yellow"))],
                 [sg.Button("Start", key='start_table', size=(15, 2), font=('Helvetica', 15))],
                 [sg.Button("Grasp", key='grasp table', size=(15, 2), font=('Helvetica', 15))],
                 [sg.Button("Stop", key='stop_table', size=(15, 2), font=('Helvetica', 15))],
@@ -83,6 +88,7 @@ class YOLOClient(Node):
                 if event == "exit" or event == sg.WIN_CLOSED:
                     break
                 elif event == "load_human":
+                    self.interface['load_human_bar'].update(1)
                     self.run_detect_from_hand(
                         weights=f'{ROOT}/runs/train/best_model_for_object_only/exp3/weights/best.pt',  # model.pt path(s)
                         data=f'{ROOT}/data/coco128.yaml',  # dataset.yaml path
@@ -91,15 +97,12 @@ class YOLOClient(Node):
                         max_det=1,  # maximum detections per image
                         classes = [0,2,4,8],
                         device='',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
-                        view_img=False,  # show results
-                        save_txt=False,  # save results to *.txt
-                        save_conf=False,  # save confidences in --save-txt labels
-                        save_img=False,  # do not save images/videos
                         project=f'{ROOT}/runs/detect/object_only_detect',  # save results to project/name
                         name='det',  # save results to project/name
                         )
 
                 elif event == "load_table":
+                    self.interface['load_table_bar'].update(1)
                     self.run_detect_from_table(
                         weights=f'{ROOT}/runs/train/best_model_for_object_on_table/exp3/weights/best.pt',  # model.pt path(s)
                         data=f'{ROOT}/data/coco128.yaml',  # dataset.yaml path
@@ -108,13 +111,11 @@ class YOLOClient(Node):
                         max_det=4,  # maximum detections per image
                         classes = [0,2,4,8],
                         device='',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
-                        view_img=False,  # show results
-                        save_txt=False,  # save results to *.txt
-                        save_conf=False,  # save confidences in --save-txt labels
-                        save_img=False,  # do not save images/videos
                         project=f'{ROOT}/runs/detect/object_on_table',  # save results to project/name
                         name='det',  # save results to project/name
                         )
+                elif event == "sleep":
+                    self.send_request_task(1)
                 else:
                     continue
 
@@ -170,6 +171,24 @@ class YOLOClient(Node):
             rclpy.spin_once(self)
             self.get_logger().info(f'Robotic arm response to yolo client')
 
+
+    def send_request_yolo_list(self, label, x, y, z):
+        if not self.client_list.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('yolo table output list service not available, wait and send request again...')
+        else:
+            self.client_list_req.object_center_x = [float(i) for i in x]   #should be list of float
+            self.client_list_req.object_center_y = [float(i) for i in y]
+            self.client_list_req.object_center_z = [float(i) for i in z]
+
+            self.get_logger().info(f'Send list request to robotic arm: object list: {label}')
+            self.get_logger().info(f'x list: {self.client_req.object_center_x}')
+            self.get_logger().info(f'y list: {self.client_req.object_center_y}')
+            self.get_logger().info(f'z list: {self.client_req.object_center_z}')
+
+            self.future = self.client.call_async(self.client_req)
+            rclpy.spin_once(self)
+            self.get_logger().info(f'Robotic arm response to yolo list client')
+
     @smart_inference_mode() 
     def run_detect_from_hand(self,
             weights=f'{ROOT}/runs/train/best_model_for_object_only/exp3/weights/best.pt',  # model.pt path(s)
@@ -189,12 +208,15 @@ class YOLOClient(Node):
 
         # Directories
         save_dir = increment_path(Path(project) / name, exist_ok=False)  # increment run
+        self.interface['load_human_bar'].update(2)
 
         # Load model
         device = select_device(device)
         model = DetectMultiBackend(weights, device=device, dnn=False, data=data, fp16=False)
+        self.interface['load_human_bar'].update(3)
         stride, names, pt = model.stride, model.names, model.pt
         imgsz = check_img_size(imgsz, s=stride)  # check image size
+        self.interface['load_human_bar'].update(4)
 
         # Dataloader
         cv_check = check_imshow()
@@ -203,6 +225,7 @@ class YOLOClient(Node):
         else:
             raise Exception('no camera input or cv check wrong!')
         bs = len(dataset)  # batch_size
+        self.interface['load_human_bar'].update(5)
         
         # Run inference
         update_img = False
@@ -214,7 +237,7 @@ class YOLOClient(Node):
             # task_num: 0-nothing input, 1-sleep, 2-prepare grasp from human, 3-start grasping from human, 
             #   4-prepare grasp from table(including scanning) , 5-start grasping from table
 
-            if event == "exit" or event == sg.WIN_CLOSED:
+            if event == "stop_human":
                 break
             elif event == "sleep":
                 task_num = 1
@@ -243,8 +266,7 @@ class YOLOClient(Node):
 
             # Inference
             with dt[1]:
-                visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
-                pred = model(im, augment=False, visualize=visualize)
+                pred = model(im, augment=False, visualize=False)
 
             # NMS
             with dt[2]:
@@ -316,10 +338,6 @@ class YOLOClient(Node):
             
             # Print time (inference-only)
             #self.get_logger().info(f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
-
-        # Print results
-        t = tuple(x.t / seen * 1E3 for x in dt)  # speeds per image
-        self.get_logger().info(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {(1, 3, *imgsz)}' % t)
 
         return True
 
@@ -342,12 +360,15 @@ class YOLOClient(Node):
 
         # Directories
         save_dir = increment_path(Path(project) / name, exist_ok=False)  # increment run
+        self.interface['load_table_bar'].update(2)
 
         # Load model
         device = select_device(device)
         model = DetectMultiBackend(weights, device=device, dnn=False, data=data, fp16=False)
+        self.interface['load_table_bar'].update(3)
         stride, names, pt = model.stride, model.names, model.pt
         imgsz = check_img_size(imgsz, s=stride)  # check image size
+        self.interface['load_table_bar'].update(4)
 
         # Dataloader
         cv_check = check_imshow()
@@ -356,6 +377,7 @@ class YOLOClient(Node):
         else:
             raise Exception('no camera input or cv check wrong!')
         bs = len(dataset)  # batch_size
+        self.interface['load_table_bar'].update(5)
         
         # Run inference
         update_img = False
@@ -367,17 +389,17 @@ class YOLOClient(Node):
             # task_num: 0-nothing input, 1-sleep, 2-prepare grasp from human, 3-start grasping from human, 
             #   4-prepare grasp from table(including scanning) , 5-start grasping from table
 
-            if event == "exit" or event == sg.WIN_CLOSED:
+            if event == "stop_table":
                 break
             elif event == "sleep":
                 task_num = 1
                 self.send_request_task(task_num)
                 update_img = False
-            elif event == "start_human":
+            elif event == "start_table":
                 task_num = 2
                 self.send_request_task(task_num)
                 update_img = True
-            elif event == "grasp_human":
+            elif event == "grasp_table":
                 task_num = 3
                 self.send_request_task(task_num)
                 update_img = True
@@ -396,15 +418,16 @@ class YOLOClient(Node):
 
             # Inference
             with dt[1]:
-                visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
-                pred = model(im, augment=False, visualize=visualize)
+                pred = model(im, augment=False, visualize=False)
 
             # NMS
             with dt[2]:
                 pred = non_max_suppression(pred, conf_thres, iou_thres, classes, False, max_det=max_det)
 
 
-            # Process predictions
+            # Process predictions, there are multiple objects on table.
+            c_list = []
+            xywh_list = []
             for i, det in enumerate(pred):  # per image
                 seen += 1
                 p, im0, frame = path[i], im0s[i].copy(), dataset.count
@@ -433,29 +456,36 @@ class YOLOClient(Node):
                         label = None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.2f}')
                         annotator.box_label(xyxy, label, color=colors(c, True))
                         annotator_depth.box_label(xyxy, label, color=colors(c, True))
+                c_list.append(c)
+                xywh_list.append(xywh)
 
 
-                # Stream results
-                im0 = annotator.result()
-                depth_im0 = annotator_depth.result()
+            # Stream results
+            im0 = annotator.result()
+            depth_im0 = annotator_depth.result()
 
-                rgb = cv2.imencode(".png", im0)[1].tobytes()
-                depth = cv2.imencode(".png", depth_im0)[1].tobytes()
-                self.interface["rgb"].update(data=rgb) 
-                self.interface["depth"].update(data=depth) 
+            rgb = cv2.imencode(".png", im0)[1].tobytes()
+            depth = cv2.imencode(".png", depth_im0)[1].tobytes()
+            self.interface["rgb"].update(data=rgb) 
+            self.interface["depth"].update(data=depth) 
 
-                # Press enter, space or 's' to save and write the image and pub grasp center
-                if task_num == 3:
+            # Press enter, space or 's' to save and write the image and pub grasp center
+            if task_num == 3:
 
-                    label = names[c]
-                    self.get_logger().info(f'Object detected: {label}, bounding box xywh: {xywh}, grasp direction: {self.grasp_dir}')
+                label_list = [names[i] for i in c_list]
+                x_list = []
+                y_list = []
+                z_list = []
+                aligned_frames = align.process(frames)    # Align the depth frame to color frame
+                aligned_depth_frame = aligned_frames.get_depth_frame() 
+                
+
+                for i, c in enumerate(c_list):
+                    self.get_logger().info(f'Object detected: {label_list[i]}, bounding box xywh: {xywh}.')
 
                     # bbox center in pixels
-                    x = int(xywh[0] * 960)
-                    y = int(xywh[1] * 540)
-
-                    aligned_frames = align.process(frames)    # Align the depth frame to color frame
-                    aligned_depth_frame = aligned_frames.get_depth_frame() 
+                    x = int(xywh[i][0] * 960)
+                    y = int(xywh[i][1] * 540)
 
                     # get the real z distance of (x, y) point
                     dis = aligned_depth_frame.get_distance(x, y)  
@@ -465,14 +495,14 @@ class YOLOClient(Node):
                     depth_intrin = aligned_depth_frame.profile.as_video_stream_profile().intrinsics 
                     camera_coordinate = rs.rs2_deproject_pixel_to_point(depth_intrin, [x, y], dis)  
 
-                    self.send_request_yolo_output(label, camera_coordinate[0], camera_coordinate[1], dis, self.grasp_dir)
+                    x_list.append(camera_coordinate[0])
+                    y_list.append(camera_coordinate[1])
+                    z_list.append(camera_coordinate[2])
+
+                self.send_request_yolo_list(label_list, x_list, y_list, z_list)
             
             # Print time (inference-only)
             #self.get_logger().info(f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
-
-        # Print results
-        t = tuple(x.t / seen * 1E3 for x in dt)  # speeds per image
-        self.get_logger().info(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {(1, 3, *imgsz)}' % t)
 
         return True
 
