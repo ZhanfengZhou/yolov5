@@ -88,6 +88,9 @@ class YOLOClient(Node):
                 if event == "exit" or event == sg.WIN_CLOSED:
                     break
                 elif event == "load_human":
+                    task_num = 2
+                    self.send_request_task(task_num)
+
                     self.interface['load_human_bar'].update(1)
                     self.run_detect_from_hand(
                         weights=f'{ROOT}/runs/train/best_model_for_object_only/exp3/weights/best.pt',  # model.pt path(s)
@@ -102,6 +105,9 @@ class YOLOClient(Node):
                         )
 
                 elif event == "load_table":
+                    task_num = 6
+                    self.send_request_task(task_num)
+
                     self.interface['load_table_bar'].update(1)
                     self.run_detect_from_table(
                         weights=f'{ROOT}/runs/train/best_model_for_object_on_table/exp3/weights/best.pt',  # model.pt path(s)
@@ -115,7 +121,8 @@ class YOLOClient(Node):
                         name='det',  # save results to project/name
                         )
                 elif event == "sleep":
-                    self.send_request_task(1)
+                    task_num = 1
+                    self.send_request_task(task_num)
                 else:
                     continue
 
@@ -238,17 +245,19 @@ class YOLOClient(Node):
             #   4-prepare grasp from table(including scanning) , 5-start grasping from table
 
             if event == "stop_human":
+                task_num = 5
+                self.send_request_task(task_num)
                 break
             elif event == "sleep":
                 task_num = 1
                 self.send_request_task(task_num)
                 update_img = False
             elif event == "start_human":
-                task_num = 2
+                task_num = 3
                 self.send_request_task(task_num)
                 update_img = True
             elif event == "grasp_human":
-                task_num = 3
+                task_num = 4
                 self.send_request_task(task_num)
                 update_img = True
             else:
@@ -390,17 +399,19 @@ class YOLOClient(Node):
             #   4-prepare grasp from table(including scanning) , 5-start grasping from table
 
             if event == "stop_table":
+                task_num = 9
+                self.send_request_task(task_num)
                 break
             elif event == "sleep":
                 task_num = 1
                 self.send_request_task(task_num)
                 update_img = False
             elif event == "start_table":
-                task_num = 2
+                task_num = 7
                 self.send_request_task(task_num)
                 update_img = True
             elif event == "grasp_table":
-                task_num = 3
+                task_num = 8
                 self.send_request_task(task_num)
                 update_img = True
             else:
@@ -415,15 +426,15 @@ class YOLOClient(Node):
                 im /= 255  # 0 - 255 to 0.0 - 1.0
                 if len(im.shape) == 3:
                     im = im[None]  # expand for batch dim
-
+    
             # Inference
             with dt[1]:
                 pred = model(im, augment=False, visualize=False)
-
+    
             # NMS
             with dt[2]:
                 pred = non_max_suppression(pred, conf_thres, iou_thres, classes, False, max_det=max_det)
-
+    
 
             # Process predictions, there are multiple objects on table.
             c_list = []
@@ -470,7 +481,7 @@ class YOLOClient(Node):
             self.interface["depth"].update(data=depth) 
 
             # Press enter, space or 's' to save and write the image and pub grasp center
-            if task_num == 3:
+            if task_num == 8:
 
                 label_list = [names[i] for i in c_list]
                 x_list = []
