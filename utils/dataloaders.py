@@ -474,7 +474,6 @@ class LoadRealSense:  # Stream from Intel RealSense L515
             clipping_distance_in_meters = 1         #1 meter
             clipping_distance = clipping_distance_in_meters / self.depth_scale
             grey_color = 153
-            img0_bk_removed = np.where((depth_image_3d > clipping_distance) | (depth_image_3d <= 0), grey_color, img0)
             color_depth_image_bk_removed = np.where((depth_image_3d > clipping_distance) | (depth_image_3d <= 0), grey_color, color_depth_image)
             
             # rotate -90 degrees
@@ -485,7 +484,6 @@ class LoadRealSense:  # Stream from Intel RealSense L515
 
             #self.color_depth = color_depth_image
             self.color_depth = color_depth_image_bk_removed
-            self.depth = depth_image
 
             break
 
@@ -508,7 +506,6 @@ class LoadRealSense:  # Stream from Intel RealSense L515
         self.rect = self.update()
         img0 = self.imgs.copy()
         color_depth = self.color_depth.copy()
-        depth = self.depth.copy()
         if cv2.waitKey(1) == ord('q'):  # q to quit
             cv2.destroyAllWindows()
             raise StopIteration
@@ -527,7 +524,7 @@ class LoadRealSense:  # Stream from Intel RealSense L515
         img = np.ascontiguousarray(img)
 
         # Return depth, depth0, img, img0
-        return str(img_path), self.profile, self.align, self.frames, color_depth, img, img0, None, ''
+        return str(img_path), color_depth, img, img0, ''
 
     def __len__(self):
         return 0  # 1E12 frames = 32 streams at 30 FPS for 30 years
