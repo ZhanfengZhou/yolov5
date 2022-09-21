@@ -74,8 +74,6 @@ class YOLOClient(Node):
                 [sg.Button("Start", key='start_human', size=(15, 2), font=('Helvetica', 15))],
                 [sg.Button("Grasp", key='grasp_human', size=(15, 2), font=('Helvetica', 15))],
                 [sg.Button("Stop", key='stop_human', size=(15, 2), font=('Helvetica', 15))],
-                [sg.Button("Welcome", key='give_hand', size=(15, 2), font=('Helvetica', 15), pad=(0, (25, 0)))],
-                [sg.Button("Shake", key='shake_hand', size=(15, 2), font=('Helvetica', 15))],
                 [sg.Button("Flag", key='grasp_flag', size=(15, 2), font=('Helvetica', 15))],
                 [sg.Button("Sleep", key='sleep', size=(15, 2), font=('Helvetica', 15), pad=(0, (25, 0)))],
                 [sg.Button("Exit", key='exit',  size=(15, 2), font=('Helvetica', 15))],
@@ -238,14 +236,6 @@ class YOLOClient(Node):
                 update_img = True
             elif event == "grasp_human":
                 task_num = 4
-                self.send_request_task(task_num)
-                update_img = True
-            elif event == "give_hand":
-                task_num = 10
-                self.send_request_task(task_num)
-                update_img = True
-            elif event == "shake_hand":
-                task_num = 11
                 self.send_request_task(task_num)
                 update_img = True
             elif event == "grasp_flag":
